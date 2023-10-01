@@ -1,108 +1,57 @@
-#!/usr/bin/env python3
-
-from flask import Flask, make_response, jsonify, request, session
-from flask_migrate import Migrate
-from flask_restful import Api, Resource
-
-from models import db, Article, User
+from flask import Flask, request, session, jsonify, redirect, url_for, render_template, abort
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.secret_key = b'Y\xf1Xz\x00\xad|eQ\x80t \xca\x1a\x10K'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
+app.secret_key = 'your_secret_key'  # Replace with a secure secret key
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///user.db'  # SQLite database
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.json.compact = False
 
-migrate = Migrate(app, db)
+db = SQLAlchemy(app)
 
-db.init_app(app)
+from models import User
 
-api = Api(app)
+@app.route('/')
+def home():
+    if 'user_id' in session:
+        return f'Hello, {session["username"]}! <a href="/logout">Logout</a>'
+    return 'Welcome! <a href="/login">Login</a>'
 
-class ClearSession(Resource):
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
 
-    def delete(self):
-    
-        session['page_views'] = None
-        session['user_id'] = None
+        user = User.query.filter_by(username=username).first()
 
-        return {}, 204
-
-class IndexArticle(Resource):
-    
-    def get(self):
-        articles = [article.to_dict() for article in Article.query.all()]
-        return make_response(jsonify(articles), 200)
-
-class ShowArticle(Resource):
-
-    def get(self, id):
-
-        article = Article.query.filter(Article.id == id).first()
-        article_json = article.to_dict()
-
-        if not session.get('user_id'):
-            session['page_views'] = 0 if not session.get('page_views') else session.get('page_views')
-            session['page_views'] += 1
-
-            if session['page_views'] <= 3:
-                return article_json, 200
-
-            return {'message': 'Maximum pageview limit reached'}, 401
-
-        return article_json, 200
-
-class Login(Resource):
-
-    def post(self):
-        
-        username = request.get_json().get('username')
-        user = User.query.filter(User.username == username).first()
-
-        if user:
-        
+        if user and user.check_password(password):
             session['user_id'] = user.id
-            return user.to_dict(), 200
+            session['username'] = user.username
+            return redirect('/')
+        else:
+            return 'Login failed. <a href="/login">Try again</a>'
 
-        return {}, 401
+    return render_template('login.html')  # Create a login form in a template
 
-class Logout(Resource):
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/')
 
-    def delete(self):
+@app.route('/members-only/articles')
+def members_only_articles():
+    if 'user_id' not in session:
+        abort(401)  # Unauthorized
 
-        session['user_id'] = None
-        
-        return {}, 204
+    # Return JSON data for members-only articles
+    articles = [
+        {'title': 'LIVERPOOL FC', 'content': 'The best premier team in the whole world.'},
+        {'title': 'CR7', 'content': 'The G.O.A.T of football.'},
+        {'title': 'Roman Reigns', 'content': 'The Ultimate Head of the Table WWE championship G.O.A.T.'},
+    ]
 
-class CheckSession(Resource):
-
-    def get(self):
-        
-        user_id = session['user_id']
-        if user_id:
-            user = User.query.filter(User.id == user_id).first()
-            return user.to_dict(), 200
-        
-        return {}, 401
-
-class MemberOnlyIndex(Resource):
-    
-    def get(self):
-        pass
-
-class MemberOnlyArticle(Resource):
-    
-    def get(self, id):
-        pass
-
-api.add_resource(ClearSession, '/clear', endpoint='clear')
-api.add_resource(IndexArticle, '/articles', endpoint='article_list')
-api.add_resource(ShowArticle, '/articles/<int:id>', endpoint='show_article')
-api.add_resource(Login, '/login', endpoint='login')
-api.add_resource(Logout, '/logout', endpoint='logout')
-api.add_resource(CheckSession, '/check_session', endpoint='check_session')
-api.add_resource(MemberOnlyIndex, '/members_only_articles', endpoint='member_index')
-api.add_resource(MemberOnlyArticle, '/members_only_articles/<int:id>', endpoint='member_article')
-
+    return jsonify(articles)
 
 if __name__ == '__main__':
-    app.run(port=5555, debug=True)
+    app.run(debug=True)
